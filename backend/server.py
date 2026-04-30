@@ -388,6 +388,46 @@ async def delete_note(note_id: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 # ------------- Customer History -------------
+@api_router.post("/customers/{customer_id}/settle")
+async def settle_customer(customer_id: str, user: dict = Depends(get_current_user)):
+    customer = await db.customers.find_one({"id": customer_id, "user_id": user["id"]})
+    if not customer:
+        raise HTTPException(404, "Cliente não encontrado")
+    pending_notes = await db.notes.find(
+        {"user_id": user["id"], "customer_id": customer_id, "status": "pending"},
+        {"_id": 0},
+    ).to_list(1000)
+    pending_total = sum(n.get("total", 0) for n in pending_notes)
+    account_balance = customer.get("account_balance", 0) or 0
+    settled_total = pending_total + account_balance
+
+    if settled_total <= 0:
+        return {
+            "ok": True,
+            "settled_amount": 0,
+            "notes_settled": 0,
+            "account_balance_cleared": 0,
+            "message": "Nenhum valor em aberto para receber",
+        }
+
+    if pending_notes:
+        await db.notes.update_many(
+            {"user_id": user["id"], "customer_id": customer_id, "status": "pending"},
+            {"$set": {"status": "paid"}},
+        )
+    if account_balance > 0:
+        await db.customers.update_one(
+            {"id": customer_id, "user_id": user["id"]},
+            {"$set": {"account_balance": 0}},
+        )
+    return {
+        "ok": True,
+        "settled_amount": settled_total,
+        "notes_settled": len(pending_notes),
+        "account_balance_cleared": account_balance,
+        "settled_at": datetime.now(timezone.utc).isoformat(),
+    }
+
 @api_router.get("/customers/{customer_id}/history")
 async def customer_history(customer_id: str, user: dict = Depends(get_current_user)):
     customer = await db.customers.find_one(

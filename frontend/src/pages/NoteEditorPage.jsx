@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Trash2, Plus, ArrowLeft, Save } from "lucide-react";
+import { Trash2, Plus, ArrowLeft, Save, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
 export default function NoteEditorPage() {
@@ -145,6 +145,11 @@ export default function NoteEditorPage() {
 
   if (loadingNote) return <div className="p-8 text-slate-500">Carregando...</div>;
 
+  const stockIssues = items.filter((it) => {
+    const p = products.find((x) => x.id === it.product_id);
+    return p && (parseFloat(it.quantity) || 0) > (p.stock ?? 0);
+  });
+
   return (
     <div className="p-6 md:p-8 max-w-7xl mx-auto">
       <button onClick={() => navigate("/notas")} className="text-sm text-slate-600 mb-4 inline-flex items-center gap-1 hover:text-slate-900" data-testid="back-btn">
@@ -163,6 +168,16 @@ export default function NoteEditorPage() {
           <Save size={16} className="mr-2" /> Salvar Nota
         </Button>
       </div>
+
+      {stockIssues.length > 0 && (
+        <div className="mb-6 flex items-start gap-3 p-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-900" data-testid="stock-warning-banner">
+          <AlertTriangle size={20} className="shrink-0 mt-0.5" />
+          <div className="text-sm">
+            <div className="font-semibold">Atenção: estoque insuficiente em {stockIssues.length} item(ns)</div>
+            <div className="text-xs mt-0.5 opacity-90">Você pode salvar mesmo assim — o estoque ficará negativo, indicando faltante.</div>
+          </div>
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-2 gap-6">
         {/* LEFT: Form */}
@@ -238,14 +253,35 @@ export default function NoteEditorPage() {
               )}
               {items.map((it, idx) => {
                 const product = products.find((p) => p.id === it.product_id);
+                const requestedQty = parseFloat(it.quantity) || 0;
+                const currentStock = product ? (product.stock ?? 0) : null;
+                // Calculate net stock change considering same-product items already in note
+                const stockWarning = product && requestedQty > currentStock;
+                const stockOut = product && currentStock <= 0;
                 return (
                   <div key={idx} className="border border-slate-200 rounded-lg p-3" data-testid={`item-row-${idx}`}>
                     <div className="flex items-start justify-between mb-2">
-                      <div className="font-medium text-slate-900">{it.product_name}</div>
+                      <div>
+                        <div className="font-medium text-slate-900">{it.product_name}</div>
+                        {product && (
+                          <div className="text-xs text-slate-500 mt-0.5">
+                            Estoque atual: <span className={stockOut ? "text-red-600 font-medium" : "text-slate-700"}>{currentStock} un.</span>
+                          </div>
+                        )}
+                      </div>
                       <Button variant="ghost" size="icon" onClick={() => removeItem(idx)} data-testid={`remove-item-${idx}`}>
                         <Trash2 size={16} className="text-red-600" />
                       </Button>
                     </div>
+                    {stockWarning && (
+                      <div className="mb-2 flex items-start gap-2 px-2.5 py-2 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-xs" data-testid={`item-${idx}-stock-warning`}>
+                        <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                        <span>
+                          Quantidade solicitada (<strong>{requestedQty}</strong>) é maior que o estoque disponível (<strong>{currentStock}</strong>).
+                          Estoque ficará negativo após salvar.
+                        </span>
+                      </div>
+                    )}
                     <div className="flex flex-wrap gap-1.5 mb-3">
                       {TIERS.map((t) => {
                         const isActive = it.tier === t.key;

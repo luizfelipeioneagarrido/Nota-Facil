@@ -496,3 +496,112 @@ class TestIteration3MongoIndex:
             assert found, f"Unique compound index (user_id, order_number) not found. Indexes: {idxs}"
         finally:
             c.close()
+
+
+
+# ---- Iteration 4: Settle Customer ----
+class TestIteration4Settle:
+    def test_settle_full_flow(self, headers):
+        # Create customer with account_balance=100, 2 pending notes, 1 paid
+        cust = requests.post(
+            f"{BASE_URL}/api/customers",
+            json={"name": "TEST_SettleCust", "account_balance": 100.0},
+            headers=headers,
+        ).json()
+        cid = cust["id"]
+        prod = requests.post(
+            f"{BASE_URL}/api/products",
+            json={"name": "TEST_SP", "stock": 100, "price_blue": 25.0},
+            headers=headers,
+        ).json()
+        pid = prod["id"]
+        item = {"product_id": pid, "product_name": "TEST_SP", "quantity": 1, "unit_price": 25.0, "tier": "blue"}
+        n1 = requests.post(f"{BASE_URL}/api/notes", json={"customer_id": cid, "customer_name": "TEST_SettleCust", "items": [item], "status": "pending"}, headers=headers).json()
+        n2 = requests.post(f"{BASE_URL}/api/notes", json={"customer_id": cid, "customer_name": "TEST_SettleCust", "items": [item], "status": "pending"}, headers=headers).json()
+        n3 = requests.post(f"{BASE_URL}/api/notes", json={"customer_id": cid, "customer_name": "TEST_SettleCust", "items": [item], "status": "paid"}, headers=headers).json()
+        try:
+            # Settle
+            r = requests.post(f"{BASE_URL}/api/customers/{cid}/settle", headers=headers)
+            assert r.status_code == 200, r.text
+            data = r.json()
+            assert data["ok"] is True
+            assert data["settled_amount"] == 150.0  # 50 pending + 100 balance
+            assert data["notes_settled"] == 2
+            assert data["account_balance_cleared"] == 100.0
+            assert "settled_at" in data
+
+            # Verify persistence
+            hist = requests.get(f"{BASE_URL}/api/customers/{cid}/history", headers=headers).json()
+            assert hist["stats"]["total_pending"] == 0.0
+            assert hist["stats"]["account_balance"] == 0
+            assert hist["stats"]["total_open"] == 0
+            assert hist["stats"]["total_paid"] == 75.0  # 25 originally paid + 50 newly settled
+
+            # Verify notes statuses
+            notes_status = {n["id"]: n["status"] for n in hist["notes"]}
+            assert notes_status[n1["id"]] == "paid"
+            assert notes_status[n2["id"]] == "paid"
+            assert notes_status[n3["id"]] == "paid"
+
+            # Idempotency: re-settle should return zeros
+            r2 = requests.post(f"{BASE_URL}/api/customers/{cid}/settle", headers=headers)
+            assert r2.status_code == 200
+            d2 = r2.json()
+            assert d2["settled_amount"] == 0
+            assert d2["notes_settled"] == 0
+            assert d2["account_balance_cleared"] == 0
+            assert "message" in d2
+        finally:
+            for nn in (n1, n2, n3):
+                requests.delete(f"{BASE_URL}/api/notes/{nn['id']}", headers=headers)
+            requests.delete(f"{BASE_URL}/api/products/{pid}", headers=headers)
+            requests.delete(f"{BASE_URL}/api/customers/{cid}", headers=headers)
+
+    def test_settle_nothing_to_settle(self, headers):
+        cust = requests.post(
+            f"{BASE_URL}/api/customers",
+            json={"name": "TEST_SettleEmpty", "account_balance": 0},
+            headers=headers,
+        ).json()
+        cid = cust["id"]
+        try:
+            r = requests.post(f"{BASE_URL}/api/customers/{cid}/settle", headers=headers)
+            assert r.status_code == 200
+            d = r.json()
+            assert d["settled_amount"] == 0
+            assert d["notes_settled"] == 0
+            assert d["account_balance_cleared"] == 0
+            assert "message" in d
+        finally:
+            requests.delete(f"{BASE_URL}/api/customers/{cid}", headers=headers)
+
+    def test_settle_404(self, headers):
+        r = requests.post(f"{BASE_URL}/api/customers/does-not-exist-zzz/settle", headers=headers)
+        assert r.status_code == 404
+
+    def test_settle_401(self):
+        r = requests.post(f"{BASE_URL}/api/customers/anything/settle")
+        assert r.status_code == 401
+
+    def test_settle_multitenant_isolation(self, headers):
+        # Create a customer under admin
+        cust = requests.post(
+            f"{BASE_URL}/api/customers",
+            json={"name": "TEST_SettleIso", "account_balance": 50.0},
+            headers=headers,
+        ).json()
+        cid = cust["id"]
+        # Register a different user
+        email = f"settleiso_{uuid.uuid4().hex[:8]}@example.com"
+        rr = requests.post(f"{BASE_URL}/api/auth/register", json={"email": email, "password": "pass123", "name": "TEST_Iso"})
+        other_token = rr.json()["token"]
+        other_h = {"Authorization": f"Bearer {other_token}"}
+        try:
+            # Other user trying to settle admin's customer -> 404
+            r = requests.post(f"{BASE_URL}/api/customers/{cid}/settle", headers=other_h)
+            assert r.status_code == 404
+            # Admin's customer should still have balance untouched
+            cdoc = requests.get(f"{BASE_URL}/api/customers/{cid}/history", headers=headers).json()
+            assert cdoc["stats"]["account_balance"] == 50.0
+        finally:
+            requests.delete(f"{BASE_URL}/api/customers/{cid}", headers=headers)
