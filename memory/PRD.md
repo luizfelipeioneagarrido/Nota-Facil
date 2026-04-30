@@ -18,18 +18,20 @@
 
 ## What's Implemented (30/04/2026)
 - ✅ JWT auth (register, login, me, logout) com seed admin
-- ✅ Produtos CRUD com 4 níveis de preço (azul/verde/amarela/vermelha)
-- ✅ Clientes CRUD (nome, endereço, telefone, email)
+- ✅ Produtos CRUD com 4 níveis de preço (azul/verde/amarela/vermelha) + **estoque (controle de quantidade)**
+- ✅ Clientes CRUD (nome, endereço, telefone, email) + **Contas (débito anterior opcional)**
 - ✅ Notas CRUD com numeração automática DDMMYY + seq 2 dígitos
-- ✅ Editor de Nota com preview em tempo real, seleção de cliente cadastrado, troca de tier atualiza preço unitário
-- ✅ Cálculo automático de subtotal, taxa de entrega, total
-- ✅ Página de impressão com layout limpo (@media print) + download PDF
-- ✅ Dashboard com stats e gráfico 7 dias (Recharts)
+- ✅ Editor de Nota com preview em tempo real, seleção de cliente cadastrado (auto-preenche contas), troca de tier atualiza preço unitário
+- ✅ Cálculo automático de subtotal, taxa de entrega, total + **Total Geral com débito anterior quando aplicável**
+- ✅ Página de impressão com **layout dual: Térmica 58mm e A4** + download PDF
+- ✅ **Tier (Linha Azul/Verde/Amarela/Vermelha) ocultado na nota impressa** (visível apenas no editor)
+- ✅ Dashboard com **filtro de período (Dia/Semana/Mês/Ano)** e gráfico dinâmico
+- ✅ **Cards e atalhos clicáveis** no dashboard para navegação rápida
 - ✅ Status de nota (Pendente/Pago/Cancelada)
 
 ## Testing
-- ✅ 12/12 backend tests (auth, CRUD, order_number format, multi-tenant, dashboard)
-- ✅ Frontend smoke (login, sidebar, produtos, clientes, notas)
+- ✅ 19/19 backend tests passando (auth, CRUD, order_number, multi-tenant, dashboard period, stock, account_balance)
+- ✅ Frontend smoke completo (login, sidebar, todas as páginas, fluxo de notas, impressão térmica/A4)
 - Test file: `/app/backend/tests/backend_test.py`
 
 ## Test Credentials
