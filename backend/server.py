@@ -15,6 +15,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Respons
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
+from pymongo import ReturnDocument
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -236,24 +237,97 @@ async def delete_customer(customer_id: str, user: dict = Depends(get_current_use
 # ------------- Notes -------------
 async def generate_order_number(user_id: str) -> str:
     now = datetime.now(timezone.utc)
-    # DDMMYY format
     date_prefix = now.strftime("%d%m%y")
-    # find existing notes today for this user
-    pattern = f"^{date_prefix}"
-    count = await db.notes.count_documents({
-        "user_id": user_id,
-        "order_number": {"$regex": pattern}
-    })
-    seq = count + 1
+    counter_id = f"{user_id}_{date_prefix}"
+
+    # Find max existing seq for today (handles legacy data and ensures uniqueness)
+    max_existing = 0
+    cursor = db.notes.find(
+        {"user_id": user_id, "order_number": {"$regex": f"^{date_prefix}"}},
+        {"order_number": 1, "_id": 0},
+    ).sort("order_number", -1).limit(1)
+    docs = await cursor.to_list(1)
+    if docs:
+        try:
+            max_existing = int(docs[0]["order_number"][6:])
+        except (ValueError, IndexError):
+            max_existing = 0
+
+    # Atomically: seq = max(current_seq, max_existing) + 1
+    res = await db.counters.find_one_and_update(
+        {"_id": counter_id},
+        [
+            {"$set": {
+                "seq": {
+                    "$add": [
+                        {"$max": [{"$ifNull": ["$seq", 0]}, max_existing]},
+                        1,
+                    ]
+                }
+            }}
+        ],
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    seq = res["seq"]
     return f"{date_prefix}{seq:02d}"
+
+def aggregate_items_by_product(items):
+    agg = {}
+    for it in items:
+        pid = it.get("product_id") if isinstance(it, dict) else it.product_id
+        qty = it.get("quantity") if isinstance(it, dict) else it.quantity
+        if not pid:
+            continue
+        agg[pid] = agg.get(pid, 0) + (qty or 0)
+    return agg
+
+async def adjust_stock(user_id: str, deltas: dict):
+    """deltas: {product_id: qty_to_subtract_from_stock} (positive=decrement, negative=restore)"""
+    for pid, delta in deltas.items():
+        if not delta:
+            continue
+        await db.products.update_one(
+            {"id": pid, "user_id": user_id},
+            {"$inc": {"stock": -delta}},
+        )
 
 def calc_totals(items: List[NoteItemIn], delivery_fee: float):
     subtotal = sum(i.quantity * i.unit_price for i in items)
     return subtotal, subtotal + (delivery_fee or 0)
 
 @api_router.get("/notes")
-async def list_notes(user: dict = Depends(get_current_user)):
-    items = await db.notes.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+async def list_notes(
+    status: Optional[str] = None,
+    period: str = "all",
+    customer_id: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    query = {"user_id": user["id"]}
+    if status and status in ("pending", "paid", "cancelled"):
+        query["status"] = status
+    if customer_id:
+        query["customer_id"] = customer_id
+    items = await db.notes.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+
+    if period != "all":
+        today_dt = datetime.now(timezone.utc).date()
+        start = None
+        if period == "today":
+            start = today_dt
+        elif period == "week":
+            start = today_dt - timedelta(days=6)
+        elif period == "month":
+            start = today_dt - timedelta(days=29)
+        elif period == "year":
+            start = today_dt.replace(month=1, day=1)
+        if start is not None:
+            def _in(n):
+                try:
+                    return datetime.fromisoformat(n["created_at"]).date() >= start
+                except Exception:
+                    return False
+            items = [n for n in items if _in(n)]
     return items
 
 @api_router.get("/notes/{note_id}")
@@ -278,6 +352,9 @@ async def create_note(payload: NoteIn, user: dict = Depends(get_current_user)):
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.notes.insert_one(doc)
+    # Decrement stock for each item
+    deltas = aggregate_items_by_product(payload.items)
+    await adjust_stock(user["id"], deltas)
     doc.pop("_id", None)
     return doc
 
@@ -289,15 +366,54 @@ async def update_note(note_id: str, payload: NoteIn, user: dict = Depends(get_cu
     subtotal, total = calc_totals(payload.items, payload.delivery_fee)
     update = {**payload.model_dump(), "subtotal": subtotal, "total": total}
     await db.notes.update_one({"id": note_id, "user_id": user["id"]}, {"$set": update})
+    # Adjust stock by delta (new - old)
+    old_agg = aggregate_items_by_product(existing.get("items", []))
+    new_agg = aggregate_items_by_product(payload.items)
+    deltas = {}
+    for pid in set(list(old_agg.keys()) + list(new_agg.keys())):
+        deltas[pid] = new_agg.get(pid, 0) - old_agg.get(pid, 0)
+    await adjust_stock(user["id"], deltas)
     doc = await db.notes.find_one({"id": note_id}, {"_id": 0})
     return doc
 
 @api_router.delete("/notes/{note_id}")
 async def delete_note(note_id: str, user: dict = Depends(get_current_user)):
-    res = await db.notes.delete_one({"id": note_id, "user_id": user["id"]})
-    if res.deleted_count == 0:
+    existing = await db.notes.find_one({"id": note_id, "user_id": user["id"]})
+    if not existing:
         raise HTTPException(404, "Nota não encontrada")
+    await db.notes.delete_one({"id": note_id, "user_id": user["id"]})
+    # Restore stock
+    deltas = {pid: -qty for pid, qty in aggregate_items_by_product(existing.get("items", [])).items()}
+    await adjust_stock(user["id"], deltas)
     return {"ok": True}
+
+# ------------- Customer History -------------
+@api_router.get("/customers/{customer_id}/history")
+async def customer_history(customer_id: str, user: dict = Depends(get_current_user)):
+    customer = await db.customers.find_one(
+        {"id": customer_id, "user_id": user["id"]}, {"_id": 0, "user_id": 0}
+    )
+    if not customer:
+        raise HTTPException(404, "Cliente não encontrado")
+    notes = await db.notes.find(
+        {"user_id": user["id"], "customer_id": customer_id}, {"_id": 0}
+    ).sort("created_at", -1).to_list(1000)
+    total_paid = sum(n.get("total", 0) for n in notes if n.get("status") == "paid")
+    total_pending = sum(n.get("total", 0) for n in notes if n.get("status") == "pending")
+    total_cancelled = sum(n.get("total", 0) for n in notes if n.get("status") == "cancelled")
+    account_balance = customer.get("account_balance", 0)
+    return {
+        "customer": customer,
+        "notes": notes,
+        "stats": {
+            "total_notes": len(notes),
+            "total_paid": total_paid,
+            "total_pending": total_pending,
+            "total_cancelled": total_cancelled,
+            "account_balance": account_balance,
+            "total_open": total_pending + account_balance,
+        },
+    }
 
 # ------------- Dashboard -------------
 @api_router.get("/dashboard/stats")
@@ -379,6 +495,7 @@ async def startup():
     await db.products.create_index("id", unique=True)
     await db.customers.create_index("id", unique=True)
     await db.notes.create_index("id", unique=True)
+    await db.notes.create_index([("user_id", 1), ("order_number", 1)], unique=True)
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@notas.com")
     admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")

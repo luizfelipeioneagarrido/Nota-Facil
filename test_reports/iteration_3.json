@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 3 testing complete. All 26 backend pytest cases pass (added 7 new tests: stock auto-decrement on note create/update/delete, status+period+customer_id filters on /api/notes, sequential order_number uniqueness across 7 rapid POSTs, GET /customers/{id}/history full stats verification + 404 + 401, and MongoDB unique compound index (user_id, order_number) confirmed via pymongo list_indexes). Frontend Playwright covered: NotesListPage filter-status Select + filter-period-all/today/week/month/year toggle group all present and refetch /api/notes with proper query params (verified URLs ?period=today, ?period=week, ?status=pending&period=week). CustomersPage: 3 history-customer-{id} buttons present, navigation to /clientes/{id}/historico works. CustomerHistoryPage: customer-history-name, all 5 stat boxes (stat-total-notes, stat-paid, stat-pending, stat-account-balance, stat-total-open), back-btn, new-note-for-customer-btn, and history-note-{id} table rows all render. Stats reflect backend response correctly (João Silva: 1 note, R$ 70 pending, R$ 0 balance, R$ 70 total open). Back button navigates to /clientes.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py generate_order_number: now uses $max + atomic counter — race-safer than count(). Combined with the unique compound index on (user_id, order_number), duplicates are now hard-prevented (insert would fail). However, on a duplicate-key collision the API would return 500 instead of retrying — consider catching DuplicateKeyError and retrying generate_order_number once.",
+    "server.py adjust_stock: not transactional. If a note insert succeeds but stock $inc fails partway, stock and notes go out of sync. Acceptable for MVP scale; consider Mongo transactions for production.",
+    "server.py list_notes period filter does python-side filtering after a 1000-doc fetch; works but is O(n). For larger datasets, push date filter into the Mongo query using created_at $gte ISO string.",
+    "CORS_ORIGINS='*' with allow_credentials=True still misconfigured per spec — unchanged from iter 1/2.",
+    "CustomerHistoryPage.jsx: notes are sorted desc on the server but client also displays in order — fine. No data-testid on the 'Nova Nota' link wraps the button (button has new-note-for-customer-btn). Good."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (26/26)", "frontend": "100% (all iter-3 flows verified)"},
+  "test_credentials": "admin@notas.com / admin123",
+  "seed_data_creation": "All test data uses TEST_ prefix and is cleaned up in pytest finally blocks. No residual TEST_ data left in DB after iteration 3 run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test file at /app/backend/tests/backend_test.py covers all 26 cases including iteration 3: TestIteration3StockAdjust (stock decrement/update-delta/restore on delete), TestIteration3Filters (status + customer_id + period filters), TestIteration3OrderNumberUnique (7 sequential rapid POSTs all unique + ascending), TestIteration3CustomerHistory (full stats: total_notes/paid/pending/cancelled/account_balance/total_open + 404 + 401), TestIteration3MongoIndex (verifies unique compound index via pymongo). Frontend testids confirmed: filter-status, filter-period-all/today/week/month/year (toggle group), history-customer-{id} on each customer row in /clientes, /clientes/{id}/historico page with customer-history-name, stat-total-notes, stat-paid, stat-pending, stat-account-balance, stat-total-open, back-btn, new-note-for-customer-btn, history-note-{id} rows."
+}

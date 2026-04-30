@@ -8,6 +8,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Plus, Eye, Pencil, Trash2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const STATUS_LABEL = {
   pending: { label: "Pendente", cls: "bg-amber-50 text-amber-700 border-amber-200" },
@@ -18,15 +20,20 @@ const STATUS_LABEL = {
 export default function NotesListPage() {
   const [notes, setNotes] = useState([]);
   const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [periodFilter, setPeriodFilter] = useState("all");
 
   const load = async () => {
-    const { data } = await api.get("/notes");
+    const params = new URLSearchParams();
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (periodFilter !== "all") params.set("period", periodFilter);
+    const { data } = await api.get(`/notes?${params.toString()}`);
     setNotes(data);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [statusFilter, periodFilter]);
 
   const remove = async (id) => {
-    if (!window.confirm("Excluir esta nota?")) return;
+    if (!window.confirm("Excluir esta nota? O estoque dos itens será restaurado.")) return;
     await api.delete(`/notes/${id}`);
     toast.success("Nota excluída");
     load();
@@ -37,9 +44,11 @@ export default function NotesListPage() {
     return !term || n.order_number.includes(term) || n.customer_name.toLowerCase().includes(term);
   });
 
+  const totalShown = filtered.reduce((s, n) => s + (n.total || 0), 0);
+
   return (
     <div className="p-6 md:p-8 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-8 flex-wrap gap-3">
         <div>
           <h1 className="text-3xl sm:text-4xl font-display font-bold tracking-tight text-slate-900">Notas</h1>
           <p className="text-slate-600 mt-1">Todas as suas notas não fiscais.</p>
@@ -51,16 +60,51 @@ export default function NotesListPage() {
         </Link>
       </div>
 
-      <div className="mb-4 relative max-w-md">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-        <Input
-          placeholder="Buscar por número ou cliente..."
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          className="pl-9"
-          data-testid="notes-search-input"
-        />
-      </div>
+      <Card className="p-4 mb-4">
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="flex-1 min-w-[200px]">
+            <div className="text-xs font-semibold tracking-[0.1em] uppercase text-slate-500 mb-1.5">Buscar</div>
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Input
+                placeholder="Por número ou cliente..."
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                className="pl-9"
+                data-testid="notes-search-input"
+              />
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-semibold tracking-[0.1em] uppercase text-slate-500 mb-1.5">Status</div>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[160px]" data-testid="filter-status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="pending">Pendentes</SelectItem>
+                <SelectItem value="paid">Pagas</SelectItem>
+                <SelectItem value="cancelled">Canceladas</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <div className="text-xs font-semibold tracking-[0.1em] uppercase text-slate-500 mb-1.5">Período</div>
+            <ToggleGroup type="single" value={periodFilter} onValueChange={(v) => v && setPeriodFilter(v)} className="bg-white border border-slate-200 rounded-lg p-1" data-testid="filter-period">
+              <ToggleGroupItem value="all" data-testid="filter-period-all" className="text-xs px-3 data-[state=on]:bg-slate-900 data-[state=on]:text-white">Todos</ToggleGroupItem>
+              <ToggleGroupItem value="today" data-testid="filter-period-today" className="text-xs px-3 data-[state=on]:bg-slate-900 data-[state=on]:text-white">Hoje</ToggleGroupItem>
+              <ToggleGroupItem value="week" data-testid="filter-period-week" className="text-xs px-3 data-[state=on]:bg-slate-900 data-[state=on]:text-white">Semana</ToggleGroupItem>
+              <ToggleGroupItem value="month" data-testid="filter-period-month" className="text-xs px-3 data-[state=on]:bg-slate-900 data-[state=on]:text-white">Mês</ToggleGroupItem>
+              <ToggleGroupItem value="year" data-testid="filter-period-year" className="text-xs px-3 data-[state=on]:bg-slate-900 data-[state=on]:text-white">Ano</ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+        </div>
+        <div className="mt-3 pt-3 border-t border-slate-100 text-xs text-slate-500 flex items-center gap-4">
+          <span><strong className="text-slate-900">{filtered.length}</strong> nota(s)</span>
+          <span>Total exibido: <strong className="text-slate-900">{brl(totalShown)}</strong></span>
+        </div>
+      </Card>
 
       <Card className="overflow-hidden">
         <Table>

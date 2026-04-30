@@ -323,3 +323,176 @@ class TestMultiTenant:
         assert not any(x["id"] == pid for x in r)
         r = requests.delete(f"{BASE_URL}/api/products/{pid}", headers=h2)
         assert r.status_code == 404
+
+
+
+# ---- Iteration 3: Stock auto-decrement, filters, customer history ----
+class TestIteration3StockAdjust:
+    def test_stock_decrement_on_create(self, headers):
+        # Create product with stock=10
+        p = requests.post(f"{BASE_URL}/api/products", json={"name": "TEST_StockA", "stock": 10, "price_blue": 5.0}, headers=headers).json()
+        pid = p["id"]
+        try:
+            assert p["stock"] == 10
+            # Create note qty=3
+            r = requests.post(f"{BASE_URL}/api/notes", json={
+                "customer_name": "TEST_C",
+                "items": [{"product_id": pid, "product_name": "TEST_StockA", "quantity": 3, "unit_price": 5.0, "tier": "blue"}],
+            }, headers=headers)
+            assert r.status_code == 200
+            nid = r.json()["id"]
+            # Verify stock now 7
+            prod = next(x for x in requests.get(f"{BASE_URL}/api/products", headers=headers).json() if x["id"] == pid)
+            assert prod["stock"] == 7, f"expected 7 got {prod['stock']}"
+            # Update note qty to 5 -> stock should be 5
+            r = requests.put(f"{BASE_URL}/api/notes/{nid}", json={
+                "customer_name": "TEST_C",
+                "items": [{"product_id": pid, "product_name": "TEST_StockA", "quantity": 5, "unit_price": 5.0, "tier": "blue"}],
+            }, headers=headers)
+            assert r.status_code == 200
+            prod = next(x for x in requests.get(f"{BASE_URL}/api/products", headers=headers).json() if x["id"] == pid)
+            assert prod["stock"] == 5, f"after update expected 5 got {prod['stock']}"
+            # Delete note -> stock back to 10
+            r = requests.delete(f"{BASE_URL}/api/notes/{nid}", headers=headers)
+            assert r.status_code == 200
+            prod = next(x for x in requests.get(f"{BASE_URL}/api/products", headers=headers).json() if x["id"] == pid)
+            assert prod["stock"] == 10, f"after delete expected 10 got {prod['stock']}"
+        finally:
+            requests.delete(f"{BASE_URL}/api/products/{pid}", headers=headers)
+
+
+class TestIteration3Filters:
+    def test_filter_status_and_customer_id(self, headers):
+        cust = requests.post(f"{BASE_URL}/api/customers", json={"name": "TEST_FilterCust"}, headers=headers).json()
+        cid = cust["id"]
+        prod = requests.post(f"{BASE_URL}/api/products", json={"name": "TEST_FP", "stock": 100, "price_blue": 1.0}, headers=headers).json()
+        pid = prod["id"]
+        item = {"product_id": pid, "product_name": "TEST_FP", "quantity": 1, "unit_price": 1.0, "tier": "blue"}
+        n_pending = requests.post(f"{BASE_URL}/api/notes", json={"customer_id": cid, "customer_name": "TEST_FilterCust", "items": [item], "status": "pending"}, headers=headers).json()
+        n_paid = requests.post(f"{BASE_URL}/api/notes", json={"customer_id": cid, "customer_name": "TEST_FilterCust", "items": [item], "status": "paid"}, headers=headers).json()
+        n_cancel = requests.post(f"{BASE_URL}/api/notes", json={"customer_id": cid, "customer_name": "TEST_FilterCust", "items": [item], "status": "cancelled"}, headers=headers).json()
+        try:
+            # status=pending
+            r = requests.get(f"{BASE_URL}/api/notes?status=pending&customer_id=" + cid, headers=headers)
+            assert r.status_code == 200
+            ids = [n["id"] for n in r.json()]
+            assert n_pending["id"] in ids
+            assert n_paid["id"] not in ids and n_cancel["id"] not in ids
+            # status=paid
+            r = requests.get(f"{BASE_URL}/api/notes?status=paid&customer_id=" + cid, headers=headers)
+            ids = [n["id"] for n in r.json()]
+            assert n_paid["id"] in ids and n_pending["id"] not in ids
+            # status=cancelled
+            r = requests.get(f"{BASE_URL}/api/notes?status=cancelled&customer_id=" + cid, headers=headers)
+            ids = [n["id"] for n in r.json()]
+            assert n_cancel["id"] in ids
+            # customer_id filter only -> all 3
+            r = requests.get(f"{BASE_URL}/api/notes?customer_id=" + cid, headers=headers)
+            ids = [n["id"] for n in r.json()]
+            for nn in (n_pending, n_paid, n_cancel):
+                assert nn["id"] in ids
+            # period=today should include them all
+            r = requests.get(f"{BASE_URL}/api/notes?period=today&customer_id=" + cid, headers=headers)
+            ids = [n["id"] for n in r.json()]
+            for nn in (n_pending, n_paid, n_cancel):
+                assert nn["id"] in ids
+            # period=year should also include
+            r = requests.get(f"{BASE_URL}/api/notes?period=year&customer_id=" + cid, headers=headers)
+            assert r.status_code == 200
+            assert len(r.json()) >= 3
+        finally:
+            for nn in (n_pending, n_paid, n_cancel):
+                requests.delete(f"{BASE_URL}/api/notes/{nn['id']}", headers=headers)
+            requests.delete(f"{BASE_URL}/api/products/{pid}", headers=headers)
+            requests.delete(f"{BASE_URL}/api/customers/{cid}", headers=headers)
+
+
+class TestIteration3OrderNumberUnique:
+    def test_sequential_order_numbers_unique(self, headers):
+        prod = requests.post(f"{BASE_URL}/api/products", json={"name": "TEST_OnP", "stock": 100, "price_blue": 1.0}, headers=headers).json()
+        pid = prod["id"]
+        item = {"product_id": pid, "product_name": "TEST_OnP", "quantity": 1, "unit_price": 1.0, "tier": "blue"}
+        created = []
+        try:
+            order_nums = []
+            for _ in range(7):
+                r = requests.post(f"{BASE_URL}/api/notes", json={"customer_name": "TEST_O", "items": [item]}, headers=headers)
+                assert r.status_code == 200, r.text
+                created.append(r.json()["id"])
+                order_nums.append(r.json()["order_number"])
+            # all unique
+            assert len(set(order_nums)) == len(order_nums), f"Duplicates: {order_nums}"
+            # all share date prefix
+            prefix = datetime.now(timezone.utc).strftime("%d%m%y")
+            assert all(o.startswith(prefix) for o in order_nums)
+            # ascending sequence numbers
+            seqs = [int(o[6:]) for o in order_nums]
+            assert seqs == sorted(seqs), f"Not ascending: {seqs}"
+        finally:
+            for nid in created:
+                requests.delete(f"{BASE_URL}/api/notes/{nid}", headers=headers)
+            requests.delete(f"{BASE_URL}/api/products/{pid}", headers=headers)
+
+
+class TestIteration3CustomerHistory:
+    def test_customer_history(self, headers):
+        cust = requests.post(f"{BASE_URL}/api/customers", json={"name": "TEST_HCust", "account_balance": 50.0}, headers=headers).json()
+        cid = cust["id"]
+        prod = requests.post(f"{BASE_URL}/api/products", json={"name": "TEST_HP", "stock": 100, "price_blue": 10.0}, headers=headers).json()
+        pid = prod["id"]
+        item = {"product_id": pid, "product_name": "TEST_HP", "quantity": 1, "unit_price": 10.0, "tier": "blue"}
+        # create 3 notes pending, paid, cancelled - totals 10/20/30
+        n1 = requests.post(f"{BASE_URL}/api/notes", json={"customer_id": cid, "customer_name": "TEST_HCust", "items": [item], "delivery_fee": 0, "status": "pending"}, headers=headers).json()
+        n2 = requests.post(f"{BASE_URL}/api/notes", json={"customer_id": cid, "customer_name": "TEST_HCust", "items": [item], "delivery_fee": 10, "status": "paid"}, headers=headers).json()
+        n3 = requests.post(f"{BASE_URL}/api/notes", json={"customer_id": cid, "customer_name": "TEST_HCust", "items": [item], "delivery_fee": 20, "status": "cancelled"}, headers=headers).json()
+        try:
+            r = requests.get(f"{BASE_URL}/api/customers/{cid}/history", headers=headers)
+            assert r.status_code == 200, r.text
+            data = r.json()
+            assert data["customer"]["id"] == cid
+            assert data["customer"]["name"] == "TEST_HCust"
+            assert isinstance(data["notes"], list)
+            assert len(data["notes"]) == 3
+            # sorted desc by created_at
+            ts = [n["created_at"] for n in data["notes"]]
+            assert ts == sorted(ts, reverse=True)
+            stats = data["stats"]
+            assert stats["total_notes"] == 3
+            assert stats["total_paid"] == 20.0
+            assert stats["total_pending"] == 10.0
+            assert stats["total_cancelled"] == 30.0
+            assert stats["account_balance"] == 50.0
+            assert stats["total_open"] == 60.0  # 10 pending + 50 balance
+        finally:
+            for nn in (n1, n2, n3):
+                requests.delete(f"{BASE_URL}/api/notes/{nn['id']}", headers=headers)
+            requests.delete(f"{BASE_URL}/api/products/{pid}", headers=headers)
+            requests.delete(f"{BASE_URL}/api/customers/{cid}", headers=headers)
+
+    def test_customer_history_404(self, headers):
+        r = requests.get(f"{BASE_URL}/api/customers/does-not-exist-xyz/history", headers=headers)
+        assert r.status_code == 404
+
+    def test_customer_history_401(self):
+        r = requests.get(f"{BASE_URL}/api/customers/anything/history")
+        assert r.status_code == 401
+
+
+class TestIteration3MongoIndex:
+    def test_unique_index_exists(self):
+        # Use pymongo directly to confirm unique compound index
+        from pymongo import MongoClient
+        url = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
+        dbname = os.environ.get('DB_NAME', 'test_database')
+        c = MongoClient(url)
+        try:
+            idxs = list(c[dbname].notes.list_indexes())
+            found = False
+            for i in idxs:
+                key = i.get("key", {})
+                if list(key.items()) == [("user_id", 1), ("order_number", 1)] and i.get("unique"):
+                    found = True
+                    break
+            assert found, f"Unique compound index (user_id, order_number) not found. Indexes: {idxs}"
+        finally:
+            c.close()

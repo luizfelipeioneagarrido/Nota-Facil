@@ -10,6 +10,7 @@ import CustomersPage from "@/pages/CustomersPage";
 import NotesListPage from "@/pages/NotesListPage";
 import NoteEditorPage from "@/pages/NoteEditorPage";
 import NotePrintPage from "@/pages/NotePrintPage";
+import CustomerHistoryPage from "@/pages/CustomerHistoryPage";
 import { Toaster } from "sonner";
 
 function App() {
@@ -25,6 +26,7 @@ function App() {
               <Route path="/" element={<DashboardPage />} />
               <Route path="/produtos" element={<ProductsPage />} />
               <Route path="/clientes" element={<CustomersPage />} />
+              <Route path="/clientes/:id/historico" element={<CustomerHistoryPage />} />
               <Route path="/notas" element={<NotesListPage />} />
               <Route path="/notas/nova" element={<NoteEditorPage />} />
               <Route path="/notas/:id/editar" element={<NoteEditorPage />} />

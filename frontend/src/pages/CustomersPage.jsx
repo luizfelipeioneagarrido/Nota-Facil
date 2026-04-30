@@ -7,7 +7,8 @@ import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Pencil, Trash2, Plus } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Pencil, Trash2, Plus, History } from "lucide-react";
 import { toast } from "sonner";
 
 const empty = { name: "", address: "", phone: "", email: "", account_balance: 0 };
@@ -122,7 +123,7 @@ export default function CustomersPage() {
               <TableHead>Telefone</TableHead>
               <TableHead>Email</TableHead>
               <TableHead className="w-[120px]">Contas</TableHead>
-              <TableHead className="w-[120px] text-right">Ações</TableHead>
+              <TableHead className="w-[160px] text-right">Ações</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -149,6 +150,11 @@ export default function CustomersPage() {
                   )}
                 </TableCell>
                 <TableCell className="text-right">
+                  <Link to={`/clientes/${c.id}/historico`}>
+                    <Button variant="ghost" size="icon" data-testid={`history-customer-${c.id}`} title="Ver histórico">
+                      <History size={16} />
+                    </Button>
+                  </Link>
                   <Button variant="ghost" size="icon" onClick={() => openEdit(c)} data-testid={`edit-customer-${c.id}`}>
                     <Pencil size={16} />
                   </Button>
