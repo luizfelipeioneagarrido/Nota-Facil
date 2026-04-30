@@ -16,22 +16,25 @@
 - Auth: JWT 7d em httpOnly cookie + Authorization Bearer (localStorage)
 - Multi-tenant: cada user só vê seus próprios dados (filtrado por user_id)
 
-## What's Implemented (30/04/2026)
+## What's Implemented (Iteration 3 — 30/04/2026)
 - ✅ JWT auth (register, login, me, logout) com seed admin
-- ✅ Produtos CRUD com 4 níveis de preço (azul/verde/amarela/vermelha) + **estoque (controle de quantidade)**
-- ✅ Clientes CRUD (nome, endereço, telefone, email) + **Contas (débito anterior opcional)**
-- ✅ Notas CRUD com numeração automática DDMMYY + seq 2 dígitos
-- ✅ Editor de Nota com preview em tempo real, seleção de cliente cadastrado (auto-preenche contas), troca de tier atualiza preço unitário
-- ✅ Cálculo automático de subtotal, taxa de entrega, total + **Total Geral com débito anterior quando aplicável**
-- ✅ Página de impressão com **layout dual: Térmica 58mm e A4** + download PDF
-- ✅ **Tier (Linha Azul/Verde/Amarela/Vermelha) ocultado na nota impressa** (visível apenas no editor)
-- ✅ Dashboard com **filtro de período (Dia/Semana/Mês/Ano)** e gráfico dinâmico
-- ✅ **Cards e atalhos clicáveis** no dashboard para navegação rápida
+- ✅ Produtos CRUD com 4 níveis de preço + **estoque com decremento automático** (cria/edita/deleta nota ajusta estoque)
+- ✅ Clientes CRUD + Contas (débito anterior opcional)
+- ✅ Notas CRUD com numeração automática DDMMYY + seq atômico (counter MongoDB com $max sync)
+- ✅ **Index único `(user_id, order_number)`** — race condition prevenida no DB
+- ✅ Editor de Nota com preview em tempo real
+- ✅ Total Geral com débito anterior quando aplicável
+- ✅ Página de impressão dual (Térmica 58mm + A4) + download PDF
+- ✅ Tier (linha de preço) ocultado na nota impressa
+- ✅ Dashboard com filtro de período (Dia/Semana/Mês/Ano)
+- ✅ Cards e atalhos clicáveis no dashboard
+- ✅ **Filtros na lista de Notas** (status + período Hoje/Semana/Mês/Ano + busca)
 - ✅ Status de nota (Pendente/Pago/Cancelada)
+- ✅ **Página Histórico do Cliente** (`/clientes/:id/historico`) com 5 cards de stats (total notas, pago, pendente, débito anterior, total em aberto) + tabela de todas as notas
 
 ## Testing
-- ✅ 19/19 backend tests passando (auth, CRUD, order_number, multi-tenant, dashboard period, stock, account_balance)
-- ✅ Frontend smoke completo (login, sidebar, todas as páginas, fluxo de notas, impressão térmica/A4)
+- ✅ 26/26 backend tests passando (auth, CRUD, order_number, multi-tenant, dashboard period, stock, account_balance, filters, customer history, unique index)
+- ✅ Frontend 100% validado por testing agent
 - Test file: `/app/backend/tests/backend_test.py`
 
 ## Test Credentials
