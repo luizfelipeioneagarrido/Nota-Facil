@@ -1,0 +1,115 @@
+{
+  "theme": "Light",
+  "archetype": "4 (Swiss & High-Contrast)",
+  "emotional_tone": "Professional, reliable, efficient, clear",
+  "typography": {
+    "heading_font": "Outfit",
+    "body_font": "Inter",
+    "usage_rules": {
+      "h1": "text-4xl sm:text-5xl tracking-tight font-bold",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-semibold",
+      "h3": "text-xl sm:text-2xl font-medium",
+      "h4": "text-lg font-medium",
+      "body": "text-base text-slate-600",
+      "small_labels": "text-xs font-semibold tracking-[0.1em] uppercase text-slate-500"
+    }
+  },
+  "colors": {
+    "background": "#F8FAFC",
+    "surface": "#FFFFFF",
+    "text_primary": "#0F172A",
+    "text_secondary": "#64748B",
+    "border": "#E2E8F0",
+    "brand_primary": {
+      "default": "#000000",
+      "hover": "#333333",
+      "text": "#FFFFFF"
+    },
+    "product_tiers": {
+      "linha_azul": {
+        "bg": "#EFF6FF",
+        "border": "#3B82F6",
+        "text": "#1D4ED8",
+        "badge_class": "bg-blue-50 text-blue-700 border-blue-200"
+      },
+      "linha_verde": {
+        "bg": "#F0FDF4",
+        "border": "#22C55E",
+        "text": "#15803D",
+        "badge_class": "bg-green-50 text-green-700 border-green-200"
+      },
+      "linha_amarela": {
+        "bg": "#FEFCE8",
+        "border": "#EAB308",
+        "text": "#A16207",
+        "badge_class": "bg-yellow-50 text-yellow-700 border-yellow-200"
+      },
+      "linha_vermelha": {
+        "bg": "#FEF2F2",
+        "border": "#EF4444",
+        "text": "#B91C1C",
+        "badge_class": "bg-red-50 text-red-700 border-red-200"
+      }
+    }
+  },
+  "spacing_and_layout": {
+    "grid_system": "Control Room Mode",
+    "dashboard_grid": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+    "container_padding": "p-6 md:p-8",
+    "card_style": "bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200",
+    "input_style": "rounded-lg border-slate-300 focus:ring-2 focus:ring-slate-900 focus:border-slate-900"
+  },
+  "media": {
+    "image_urls": [
+      {
+        "url": "https://images.unsplash.com/photo-1763303775599-08d20753a9ec?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzV8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMHdoaXRlJTIwYXJjaGl0ZWN0dXJhbCUyMGdlb21ldHJ5fGVufDB8fHx8MTc3NzUyMzk3MXww&ixlib=rb-4.1.0&q=85",
+        "description": "Abstract white architectural geometry",
+        "category": "login_background",
+        "usage": "Use as the right-side or left-side background image panel on the authentication screens to provide a premium, modern feel."
+      }
+    ]
+  },
+  "icons": {
+    "library": "lucide-react",
+    "instructions": "Use lucide-react for all icons. Keep icon weight consistent (strokeWidth={2})."
+  },
+  "components_and_features": {
+    "sidebar_navigation": {
+      "style": "Fixed, white background, border-r border-slate-200. Links should have hover:bg-slate-50 hover:text-black. Active link should be bold with a left-accent border."
+    },
+    "dashboard": {
+      "widgets": [
+        "Pedidos Hoje (Today's Orders)",
+        "Faturamento Total (Total Revenue)",
+        "Notas Pendentes (Pending Notes)"
+      ],
+      "chart": "Use Recharts for a simple 7-day revenue bar chart if applicable."
+    },
+    "note_generator_flow": {
+      "layout": "Two-column layout on large screens. Left: Form inputs for Customer, Delivery Fee, and Items list. Right: Real-time live preview of the receipt/note.",
+      "order_number": "Auto-generate using DDMMYY + sequential (e.g., 260426001 for April 26, 2026, order 1).",
+      "price_tiers": "When adding a product to the note, display a grouped button or select field indicating Azul, Verde, Amarela, Vermelha with their respective colors to quickly pick the tier for that item.",
+      "calculations": "Line Item Total = Price * Qty. Subtotal = Sum of Line Items. Total = Subtotal + Delivery Fee."
+    },
+    "print_view": {
+      "css_rules": "Add @media print styles to hide sidebar, header, and action buttons. The printed note should occupy 100% width, remove background colors (save ink), and emphasize borders and text contrast."
+    }
+  },
+  "animations": {
+    "interactions": "Use subtle hover state transitions (duration-200 ease-in-out) on buttons and rows.",
+    "page_transitions": "Fade-in entrance for dashboard elements to feel polished."
+  },
+  "accessibility": {
+    "focus_states": "All interactive elements must have focus:ring-2 focus:ring-black focus:outline-none.",
+    "data_testid": "CRITICAL: All buttons, inputs, table rows, and modals MUST include descriptive data-testid attributes (e.g., data-testid=\"create-note-button\")."
+  },
+  "instructions_to_main_agent": [
+    "Ensure all copy is in Brazilian Portuguese (PT-BR).",
+    "Set up JWT-based mock authentication flow to protect dashboard routes.",
+    "Implement the 4 product price tiers strictly using the color logic provided in the 'colors.product_tiers' object.",
+    "Build a clean printable component for the Non-Fiscal Note using '@media print' hiding the rest of the UI.",
+    "Use Shadcn UI for tables, inputs, dialogs, and select components.",
+    "Implement date formatting strictly as DD/MM/YYYY.",
+    "Ensure the layout breaks down correctly to a stacked mobile view for smaller screens."
+  ]
+}
