@@ -1,4 +1,4 @@
-Json
+json
 {
   "buildCommand": "npm run build"
 }
