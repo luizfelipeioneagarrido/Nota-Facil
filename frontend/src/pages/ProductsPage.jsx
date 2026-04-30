@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Pencil, Trash2, Plus } from "lucide-react";
 import { toast } from "sonner";
 
-const empty = { name: "", description: "", price_blue: "", price_green: "", price_yellow: "", price_red: "" };
+const empty = { name: "", description: "", stock: 0, price_blue: "", price_green: "", price_yellow: "", price_red: "" };
 
 export default function ProductsPage() {
   const [items, setItems] = useState([]);
@@ -32,6 +32,7 @@ export default function ProductsPage() {
   const openEdit = (p) => {
     setForm({
       name: p.name, description: p.description || "",
+      stock: p.stock ?? 0,
       price_blue: p.price_blue, price_green: p.price_green,
       price_yellow: p.price_yellow, price_red: p.price_red,
     });
@@ -44,6 +45,7 @@ export default function ProductsPage() {
     const payload = {
       name: form.name,
       description: form.description,
+      stock: parseInt(form.stock) || 0,
       price_blue: parseFloat(form.price_blue) || 0,
       price_green: parseFloat(form.price_green) || 0,
       price_yellow: parseFloat(form.price_yellow) || 0,
@@ -93,6 +95,18 @@ export default function ProductsPage() {
                 <Label>Descrição</Label>
                 <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} data-testid="product-desc-input" />
               </div>
+              <div>
+                <Label>Estoque (quantidade disponível)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={form.stock}
+                  onChange={(e) => setForm({ ...form, stock: e.target.value })}
+                  data-testid="product-stock-input"
+                  placeholder="0"
+                />
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 {TIERS.map((t) => (
                   <div key={t.key}>
@@ -125,6 +139,7 @@ export default function ProductsPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Produto</TableHead>
+              <TableHead className="w-[100px]">Estoque</TableHead>
               <TableHead>Linha Azul</TableHead>
               <TableHead>Linha Verde</TableHead>
               <TableHead>Linha Amarela</TableHead>
@@ -135,16 +150,26 @@ export default function ProductsPage() {
           <TableBody>
             {items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-slate-500 py-12">
+                <TableCell colSpan={7} className="text-center text-slate-500 py-12">
                   Nenhum produto cadastrado ainda.
                 </TableCell>
               </TableRow>
             )}
-            {items.map((p) => (
+            {items.map((p) => {
+              const stock = p.stock ?? 0;
+              const stockColor = stock === 0 ? "bg-red-50 text-red-700 border-red-200" :
+                stock < 5 ? "bg-amber-50 text-amber-700 border-amber-200" :
+                "bg-emerald-50 text-emerald-700 border-emerald-200";
+              return (
               <TableRow key={p.id} data-testid={`product-row-${p.id}`}>
                 <TableCell>
                   <div className="font-medium text-slate-900">{p.name}</div>
                   {p.description && <div className="text-xs text-slate-500">{p.description}</div>}
+                </TableCell>
+                <TableCell>
+                  <span className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-xs font-medium ${stockColor}`} data-testid={`product-stock-${p.id}`}>
+                    {stock} un.
+                  </span>
                 </TableCell>
                 <TableCell><span className="px-2 py-1 rounded border tier-blue">{brl(p.price_blue)}</span></TableCell>
                 <TableCell><span className="px-2 py-1 rounded border tier-green">{brl(p.price_green)}</span></TableCell>
@@ -159,7 +184,7 @@ export default function ProductsPage() {
                   </Button>
                 </TableCell>
               </TableRow>
-            ))}
+            );})}
           </TableBody>
         </Table>
       </Card>

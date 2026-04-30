@@ -191,6 +191,121 @@ class TestDashboard:
         assert isinstance(d["daily_revenue"], list)
         assert len(d["daily_revenue"]) == 7
 
+    # Iteration 2: period filter
+    def test_stats_period_day(self, headers):
+        r = requests.get(f"{BASE_URL}/api/dashboard/stats?period=day", headers=headers)
+        assert r.status_code == 200
+        d = r.json()
+        assert "period_orders" in d
+        assert isinstance(d["period_orders"], int)
+        assert len(d["daily_revenue"]) == 24
+        # hourly labels like "00h"..."23h"
+        labels = [p["date"] for p in d["daily_revenue"]]
+        assert labels[0].endswith("h") and labels[-1].endswith("h")
+
+    def test_stats_period_week(self, headers):
+        r = requests.get(f"{BASE_URL}/api/dashboard/stats?period=week", headers=headers)
+        assert r.status_code == 200
+        d = r.json()
+        assert len(d["daily_revenue"]) == 7
+        assert "period_orders" in d
+
+    def test_stats_period_month(self, headers):
+        r = requests.get(f"{BASE_URL}/api/dashboard/stats?period=month", headers=headers)
+        assert r.status_code == 200
+        d = r.json()
+        assert len(d["daily_revenue"]) == 30
+        assert "period_orders" in d
+
+    def test_stats_period_year(self, headers):
+        r = requests.get(f"{BASE_URL}/api/dashboard/stats?period=year", headers=headers)
+        assert r.status_code == 200
+        d = r.json()
+        assert len(d["daily_revenue"]) == 12
+        assert "period_orders" in d
+        # monthly labels like "01/26"
+        labels = [p["date"] for p in d["daily_revenue"]]
+        assert all("/" in l for l in labels)
+
+
+# ---- Iteration 2: New fields ----
+class TestIteration2Fields:
+    def test_product_stock_field_persists(self, headers):
+        # create with stock
+        payload = {"name": "TEST_StockProd", "stock": 25, "price_blue": 5.0, "price_green": 4.5, "price_yellow": 4.0, "price_red": 3.5}
+        r = requests.post(f"{BASE_URL}/api/products", json=payload, headers=headers)
+        assert r.status_code == 200
+        p = r.json()
+        assert p["stock"] == 25
+        pid = p["id"]
+        # GET to verify persist
+        r = requests.get(f"{BASE_URL}/api/products", headers=headers)
+        found = next((x for x in r.json() if x["id"] == pid), None)
+        assert found is not None
+        assert found["stock"] == 25
+        # update stock
+        upd = {**payload, "stock": 7}
+        r = requests.put(f"{BASE_URL}/api/products/{pid}", json=upd, headers=headers)
+        assert r.status_code == 200
+        assert r.json()["stock"] == 7
+        # default 0 when omitted
+        p2 = requests.post(f"{BASE_URL}/api/products", json={"name": "TEST_NoStock", "price_blue": 1}, headers=headers).json()
+        assert p2.get("stock") == 0
+        # cleanup
+        requests.delete(f"{BASE_URL}/api/products/{pid}", headers=headers)
+        requests.delete(f"{BASE_URL}/api/products/{p2['id']}", headers=headers)
+
+    def test_customer_account_balance_persists(self, headers):
+        payload = {"name": "TEST_BalCust", "address": "X", "phone": "111", "email": "b@x.com", "account_balance": 150.50}
+        r = requests.post(f"{BASE_URL}/api/customers", json=payload, headers=headers)
+        assert r.status_code == 200
+        c = r.json()
+        assert c["account_balance"] == 150.50
+        cid = c["id"]
+        # GET
+        r = requests.get(f"{BASE_URL}/api/customers", headers=headers)
+        found = next((x for x in r.json() if x["id"] == cid), None)
+        assert found is not None
+        assert found["account_balance"] == 150.50
+        # default 0
+        c2 = requests.post(f"{BASE_URL}/api/customers", json={"name": "TEST_NoBal"}, headers=headers).json()
+        assert c2.get("account_balance") == 0
+        # cleanup
+        requests.delete(f"{BASE_URL}/api/customers/{cid}", headers=headers)
+        requests.delete(f"{BASE_URL}/api/customers/{c2['id']}", headers=headers)
+
+    def test_note_customer_account_balance_persists(self, headers):
+        # need a product
+        pr = requests.post(f"{BASE_URL}/api/products", json={"name": "TEST_PNB", "price_blue": 10.0, "price_green": 9.0, "price_yellow": 8.0, "price_red": 7.0}, headers=headers).json()
+        pid = pr["id"]
+        payload = {
+            "customer_name": "TEST_CB",
+            "customer_account_balance": 75.25,
+            "items": [{"product_id": pid, "product_name": "TEST_PNB", "quantity": 1, "unit_price": 10.0, "tier": "blue"}],
+            "delivery_fee": 0,
+            "status": "pending",
+        }
+        r = requests.post(f"{BASE_URL}/api/notes", json=payload, headers=headers)
+        assert r.status_code == 200, r.text
+        note = r.json()
+        assert note["customer_account_balance"] == 75.25
+        nid = note["id"]
+        # GET
+        r = requests.get(f"{BASE_URL}/api/notes/{nid}", headers=headers)
+        assert r.status_code == 200
+        assert r.json()["customer_account_balance"] == 75.25
+        # default
+        payload_no = {**payload, "customer_account_balance": 0}
+        del payload_no["customer_account_balance"]
+        r = requests.post(f"{BASE_URL}/api/notes", json=payload_no, headers=headers)
+        assert r.status_code == 200
+        assert r.json().get("customer_account_balance") == 0
+        nid2 = r.json()["id"]
+        # cleanup
+        requests.delete(f"{BASE_URL}/api/notes/{nid}", headers=headers)
+        requests.delete(f"{BASE_URL}/api/notes/{nid2}", headers=headers)
+        requests.delete(f"{BASE_URL}/api/products/{pid}", headers=headers)
+
 
 # ---- Multi-tenant ----
 class TestMultiTenant:

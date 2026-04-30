@@ -73,6 +73,7 @@ class LoginIn(BaseModel):
 class ProductIn(BaseModel):
     name: str
     description: Optional[str] = ""
+    stock: int = 0
     price_blue: float = 0
     price_green: float = 0
     price_yellow: float = 0
@@ -87,6 +88,7 @@ class CustomerIn(BaseModel):
     address: Optional[str] = ""
     phone: Optional[str] = ""
     email: Optional[str] = ""
+    account_balance: float = 0
 
 class Customer(CustomerIn):
     id: str
@@ -104,6 +106,7 @@ class NoteIn(BaseModel):
     customer_name: str
     customer_address: Optional[str] = ""
     customer_phone: Optional[str] = ""
+    customer_account_balance: float = 0
     items: List[NoteItemIn]
     delivery_fee: float = 0
     notes: Optional[str] = ""
@@ -298,24 +301,70 @@ async def delete_note(note_id: str, user: dict = Depends(get_current_user)):
 
 # ------------- Dashboard -------------
 @api_router.get("/dashboard/stats")
-async def dashboard_stats(user: dict = Depends(get_current_user)):
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    all_notes = await db.notes.find({"user_id": user["id"]}, {"_id": 0}).to_list(10000)
-    today_notes = [n for n in all_notes if n.get("created_at", "").startswith(today)]
-    total_revenue = sum(n.get("total", 0) for n in all_notes if n.get("status") == "paid")
-    pending = [n for n in all_notes if n.get("status") == "pending"]
-
-    # 7-day revenue
+async def dashboard_stats(period: str = "all", user: dict = Depends(get_current_user)):
     today_dt = datetime.now(timezone.utc).date()
+    today_str = today_dt.strftime("%Y-%m-%d")
+    all_notes = await db.notes.find({"user_id": user["id"]}, {"_id": 0}).to_list(10000)
+
+    # Determine period start
+    if period == "day":
+        start_dt = today_dt
+    elif period == "week":
+        start_dt = today_dt - timedelta(days=6)
+    elif period == "month":
+        start_dt = today_dt - timedelta(days=29)
+    elif period == "year":
+        start_dt = today_dt.replace(month=1, day=1)
+    else:
+        start_dt = None
+
+    def in_period(n):
+        if start_dt is None:
+            return True
+        c = n.get("created_at", "")
+        if not c:
+            return False
+        try:
+            d = datetime.fromisoformat(c).date()
+            return d >= start_dt
+        except Exception:
+            return False
+
+    period_notes = [n for n in all_notes if in_period(n)]
+    today_notes = [n for n in all_notes if n.get("created_at", "").startswith(today_str)]
+    total_revenue = sum(n.get("total", 0) for n in period_notes if n.get("status") == "paid")
+    pending = [n for n in period_notes if n.get("status") == "pending"]
+
+    # Build chart data based on period
     daily = []
-    for i in range(6, -1, -1):
-        d = today_dt - timedelta(days=i)
-        ds = d.strftime("%Y-%m-%d")
-        day_total = sum(n.get("total", 0) for n in all_notes if n.get("created_at", "").startswith(ds))
-        daily.append({"date": d.strftime("%d/%m"), "total": day_total})
+    if period == "day":
+        # 24 hours
+        for h in range(24):
+            day_total = sum(
+                n.get("total", 0) for n in all_notes
+                if n.get("created_at", "").startswith(today_str)
+                and datetime.fromisoformat(n["created_at"]).hour == h
+            )
+            daily.append({"date": f"{h:02d}h", "total": day_total})
+    elif period == "year":
+        for m in range(1, 13):
+            month_total = sum(
+                n.get("total", 0) for n in all_notes
+                if n.get("created_at", "").startswith(f"{today_dt.year}-{m:02d}")
+            )
+            daily.append({"date": f"{m:02d}/{str(today_dt.year)[-2:]}", "total": month_total})
+    else:
+        # week (7 days) or month (30 days) or all (default 7 days)
+        days = 30 if period == "month" else 7
+        for i in range(days - 1, -1, -1):
+            d = today_dt - timedelta(days=i)
+            ds = d.strftime("%Y-%m-%d")
+            day_total = sum(n.get("total", 0) for n in all_notes if n.get("created_at", "").startswith(ds))
+            daily.append({"date": d.strftime("%d/%m"), "total": day_total})
 
     return {
         "today_orders": len(today_notes),
+        "period_orders": len(period_notes),
         "total_revenue": total_revenue,
         "pending_count": len(pending),
         "total_notes": len(all_notes),

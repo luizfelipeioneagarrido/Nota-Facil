@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Pencil, Trash2, Plus } from "lucide-react";
 import { toast } from "sonner";
 
-const empty = { name: "", address: "", phone: "", email: "" };
+const empty = { name: "", address: "", phone: "", email: "", account_balance: 0 };
 
 export default function CustomersPage() {
   const [items, setItems] = useState([]);
@@ -26,16 +26,20 @@ export default function CustomersPage() {
 
   const openNew = () => { setForm(empty); setEditingId(null); setOpen(true); };
   const openEdit = (c) => {
-    setForm({ name: c.name, address: c.address || "", phone: c.phone || "", email: c.email || "" });
+    setForm({ name: c.name, address: c.address || "", phone: c.phone || "", email: c.email || "", account_balance: c.account_balance ?? 0 });
     setEditingId(c.id);
     setOpen(true);
   };
 
   const save = async (e) => {
     e.preventDefault();
+    const payload = {
+      ...form,
+      account_balance: parseFloat(form.account_balance) || 0,
+    };
     try {
-      if (editingId) await api.put(`/customers/${editingId}`, form);
-      else await api.post("/customers", form);
+      if (editingId) await api.put(`/customers/${editingId}`, payload);
+      else await api.post("/customers", payload);
       toast.success(editingId ? "Cliente atualizado" : "Cliente criado");
       setOpen(false);
       load();
@@ -87,6 +91,19 @@ export default function CustomersPage() {
                   <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} data-testid="customer-email-input" />
                 </div>
               </div>
+              <div>
+                <Label>Contas (débito anterior em aberto)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={form.account_balance}
+                  onChange={(e) => setForm({ ...form, account_balance: e.target.value })}
+                  data-testid="customer-account-balance-input"
+                  placeholder="0,00"
+                />
+                <p className="text-xs text-slate-500 mt-1">Opcional. Se &gt; 0, será exibido na nota impressa.</p>
+              </div>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
                 <Button type="submit" className="bg-slate-900 hover:bg-slate-800" data-testid="save-customer-btn">Salvar</Button>
@@ -104,21 +121,33 @@ export default function CustomersPage() {
               <TableHead>Endereço</TableHead>
               <TableHead>Telefone</TableHead>
               <TableHead>Email</TableHead>
+              <TableHead className="w-[120px]">Contas</TableHead>
               <TableHead className="w-[120px] text-right">Ações</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-slate-500 py-12">Nenhum cliente cadastrado.</TableCell>
+                <TableCell colSpan={6} className="text-center text-slate-500 py-12">Nenhum cliente cadastrado.</TableCell>
               </TableRow>
             )}
-            {items.map((c) => (
+            {items.map((c) => {
+              const bal = c.account_balance ?? 0;
+              return (
               <TableRow key={c.id} data-testid={`customer-row-${c.id}`}>
                 <TableCell className="font-medium text-slate-900">{c.name}</TableCell>
                 <TableCell className="text-sm text-slate-600 max-w-xs truncate">{c.address}</TableCell>
                 <TableCell className="text-sm">{c.phone}</TableCell>
                 <TableCell className="text-sm">{c.email}</TableCell>
+                <TableCell className="text-sm">
+                  {bal > 0 ? (
+                    <span className="px-2 py-1 rounded border bg-amber-50 text-amber-700 border-amber-200 text-xs font-medium">
+                      {bal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                    </span>
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
+                </TableCell>
                 <TableCell className="text-right">
                   <Button variant="ghost" size="icon" onClick={() => openEdit(c)} data-testid={`edit-customer-${c.id}`}>
                     <Pencil size={16} />
@@ -128,7 +157,7 @@ export default function CustomersPage() {
                   </Button>
                 </TableCell>
               </TableRow>
-            ))}
+            );})}
           </TableBody>
         </Table>
       </Card>

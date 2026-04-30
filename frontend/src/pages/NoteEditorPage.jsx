@@ -23,6 +23,7 @@ export default function NoteEditorPage() {
   const [customerName, setCustomerName] = useState("");
   const [customerAddress, setCustomerAddress] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [customerAccountBalance, setCustomerAccountBalance] = useState(0);
   const [items, setItems] = useState([]); // {product_id, product_name, quantity, unit_price, tier}
   const [deliveryFee, setDeliveryFee] = useState(0);
   const [notes, setNotes] = useState("");
@@ -50,6 +51,7 @@ export default function NoteEditorPage() {
       setCustomerName(data.customer_name);
       setCustomerAddress(data.customer_address || "");
       setCustomerPhone(data.customer_phone || "");
+      setCustomerAccountBalance(data.customer_account_balance || 0);
       setItems(data.items || []);
       setDeliveryFee(data.delivery_fee || 0);
       setNotes(data.notes || "");
@@ -75,6 +77,7 @@ export default function NoteEditorPage() {
       setCustomerName(c.name);
       setCustomerAddress(c.address || "");
       setCustomerPhone(c.phone || "");
+      setCustomerAccountBalance(c.account_balance || 0);
     }
   };
 
@@ -117,6 +120,7 @@ export default function NoteEditorPage() {
       customer_name: customerName,
       customer_address: customerAddress,
       customer_phone: customerPhone,
+      customer_account_balance: parseFloat(customerAccountBalance) || 0,
       items: items.map((i) => ({
         product_id: i.product_id,
         product_name: i.product_name,
@@ -192,6 +196,19 @@ export default function NoteEditorPage() {
                 <Label>Telefone</Label>
                 <Input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} data-testid="note-customer-phone" />
               </div>
+              <div>
+                <Label>Contas (débito anterior)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={customerAccountBalance}
+                  onChange={(e) => setCustomerAccountBalance(e.target.value)}
+                  data-testid="note-customer-account-balance"
+                  placeholder="0,00"
+                />
+                <p className="text-xs text-slate-500 mt-1">Opcional. Se &gt; 0, aparecerá na nota impressa.</p>
+              </div>
             </div>
           </Card>
 
@@ -205,7 +222,9 @@ export default function NoteEditorPage() {
                 <SelectContent>
                   {products.length === 0 && <div className="px-3 py-2 text-sm text-slate-500">Cadastre produtos primeiro.</div>}
                   {products.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name} {typeof p.stock === "number" ? `(estoque: ${p.stock})` : ""}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -376,8 +395,14 @@ export default function NoteEditorPage() {
             <div className="mt-4 space-y-1.5 text-sm">
               <div className="flex justify-between"><span className="text-slate-600">Subtotal</span><span>{brl(subtotal)}</span></div>
               <div className="flex justify-between"><span className="text-slate-600">Taxa de Entrega</span><span>{brl(parseFloat(deliveryFee)||0)}</span></div>
+              {(parseFloat(customerAccountBalance) || 0) > 0 && (
+                <div className="flex justify-between text-amber-700">
+                  <span>Contas em aberto</span>
+                  <span>{brl(parseFloat(customerAccountBalance) || 0)}</span>
+                </div>
+              )}
               <div className="flex justify-between border-t border-slate-900 pt-2 mt-2 font-display font-bold text-lg">
-                <span>TOTAL</span><span data-testid="preview-total">{brl(total)}</span>
+                <span>TOTAL</span><span data-testid="preview-total">{brl(total + (parseFloat(customerAccountBalance) || 0))}</span>
               </div>
             </div>
 
