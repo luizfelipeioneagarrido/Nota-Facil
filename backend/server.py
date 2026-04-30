@@ -1,74 +1,358 @@
-from fastapi import FastAPI, APIRouter
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
-import uuid
-from datetime import datetime, timezone
-
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+import os
+import uuid
+import logging
+import bcrypt
+import jwt
+from datetime import datetime, timezone, timedelta
+from typing import List, Optional, Literal
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field, EmailStr
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
-app = FastAPI()
+JWT_ALGORITHM = "HS256"
+JWT_SECRET = os.environ['JWT_SECRET']
 
-# Create a router with the /api prefix
+app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
+# ------------- Helpers -------------
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+def create_access_token(user_id: str, email: str) -> str:
+    payload = {
+        "sub": user_id, "email": email, "type": "access",
+        "exp": datetime.now(timezone.utc) + timedelta(days=7)
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
-# Add your routes to the router instead of directly to app
+async def get_current_user(request: Request) -> dict:
+    token = request.cookies.get("access_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+        if not user:
+            raise HTTPException(status_code=401, detail="Usuário não encontrado")
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expirado")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token inválido")
+
+# ------------- Models -------------
+class RegisterIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=4)
+    name: str
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+class ProductIn(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    price_blue: float = 0
+    price_green: float = 0
+    price_yellow: float = 0
+    price_red: float = 0
+
+class Product(ProductIn):
+    id: str
+    created_at: str
+
+class CustomerIn(BaseModel):
+    name: str
+    address: Optional[str] = ""
+    phone: Optional[str] = ""
+    email: Optional[str] = ""
+
+class Customer(CustomerIn):
+    id: str
+    created_at: str
+
+class NoteItemIn(BaseModel):
+    product_id: str
+    product_name: str
+    quantity: float
+    unit_price: float
+    tier: Literal["blue", "green", "yellow", "red"]
+
+class NoteIn(BaseModel):
+    customer_id: Optional[str] = None
+    customer_name: str
+    customer_address: Optional[str] = ""
+    customer_phone: Optional[str] = ""
+    items: List[NoteItemIn]
+    delivery_fee: float = 0
+    notes: Optional[str] = ""
+    status: Literal["pending", "paid", "cancelled"] = "pending"
+
+class Note(NoteIn):
+    id: str
+    order_number: str
+    subtotal: float
+    total: float
+    created_at: str
+    user_id: str
+
+# ------------- Auth Routes -------------
+@api_router.post("/auth/register")
+async def register(payload: RegisterIn, response: Response):
+    email = payload.email.lower()
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email já cadastrado")
+    user_id = str(uuid.uuid4())
+    user_doc = {
+        "id": user_id,
+        "email": email,
+        "name": payload.name,
+        "password_hash": hash_password(payload.password),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.insert_one(user_doc)
+    token = create_access_token(user_id, email)
+    response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none", max_age=60*60*24*7, path="/")
+    return {"id": user_id, "email": email, "name": payload.name, "token": token}
+
+@api_router.post("/auth/login")
+async def login(payload: LoginIn, response: Response):
+    email = payload.email.lower()
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(payload.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Email ou senha inválidos")
+    token = create_access_token(user["id"], email)
+    response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none", max_age=60*60*24*7, path="/")
+    return {"id": user["id"], "email": email, "name": user["name"], "token": token}
+
+@api_router.post("/auth/logout")
+async def logout(response: Response):
+    response.delete_cookie("access_token", path="/")
+    return {"ok": True}
+
+@api_router.get("/auth/me")
+async def me(user: dict = Depends(get_current_user)):
+    return user
+
+# ------------- Products -------------
+@api_router.get("/products")
+async def list_products(user: dict = Depends(get_current_user)):
+    items = await db.products.find({"user_id": user["id"]}, {"_id": 0, "user_id": 0}).sort("name", 1).to_list(1000)
+    return items
+
+@api_router.post("/products")
+async def create_product(payload: ProductIn, user: dict = Depends(get_current_user)):
+    pid = str(uuid.uuid4())
+    doc = {
+        **payload.model_dump(),
+        "id": pid,
+        "user_id": user["id"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.products.insert_one(doc)
+    doc.pop("_id", None); doc.pop("user_id", None)
+    return doc
+
+@api_router.put("/products/{product_id}")
+async def update_product(product_id: str, payload: ProductIn, user: dict = Depends(get_current_user)):
+    res = await db.products.update_one(
+        {"id": product_id, "user_id": user["id"]},
+        {"$set": payload.model_dump()}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(404, "Produto não encontrado")
+    doc = await db.products.find_one({"id": product_id}, {"_id": 0, "user_id": 0})
+    return doc
+
+@api_router.delete("/products/{product_id}")
+async def delete_product(product_id: str, user: dict = Depends(get_current_user)):
+    res = await db.products.delete_one({"id": product_id, "user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Produto não encontrado")
+    return {"ok": True}
+
+# ------------- Customers -------------
+@api_router.get("/customers")
+async def list_customers(user: dict = Depends(get_current_user)):
+    items = await db.customers.find({"user_id": user["id"]}, {"_id": 0, "user_id": 0}).sort("name", 1).to_list(1000)
+    return items
+
+@api_router.post("/customers")
+async def create_customer(payload: CustomerIn, user: dict = Depends(get_current_user)):
+    cid = str(uuid.uuid4())
+    doc = {
+        **payload.model_dump(),
+        "id": cid,
+        "user_id": user["id"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.customers.insert_one(doc)
+    doc.pop("_id", None); doc.pop("user_id", None)
+    return doc
+
+@api_router.put("/customers/{customer_id}")
+async def update_customer(customer_id: str, payload: CustomerIn, user: dict = Depends(get_current_user)):
+    res = await db.customers.update_one(
+        {"id": customer_id, "user_id": user["id"]},
+        {"$set": payload.model_dump()}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(404, "Cliente não encontrado")
+    doc = await db.customers.find_one({"id": customer_id}, {"_id": 0, "user_id": 0})
+    return doc
+
+@api_router.delete("/customers/{customer_id}")
+async def delete_customer(customer_id: str, user: dict = Depends(get_current_user)):
+    res = await db.customers.delete_one({"id": customer_id, "user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Cliente não encontrado")
+    return {"ok": True}
+
+# ------------- Notes -------------
+async def generate_order_number(user_id: str) -> str:
+    now = datetime.now(timezone.utc)
+    # DDMMYY format
+    date_prefix = now.strftime("%d%m%y")
+    # find existing notes today for this user
+    pattern = f"^{date_prefix}"
+    count = await db.notes.count_documents({
+        "user_id": user_id,
+        "order_number": {"$regex": pattern}
+    })
+    seq = count + 1
+    return f"{date_prefix}{seq:02d}"
+
+def calc_totals(items: List[NoteItemIn], delivery_fee: float):
+    subtotal = sum(i.quantity * i.unit_price for i in items)
+    return subtotal, subtotal + (delivery_fee or 0)
+
+@api_router.get("/notes")
+async def list_notes(user: dict = Depends(get_current_user)):
+    items = await db.notes.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return items
+
+@api_router.get("/notes/{note_id}")
+async def get_note(note_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.notes.find_one({"id": note_id, "user_id": user["id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Nota não encontrada")
+    return doc
+
+@api_router.post("/notes")
+async def create_note(payload: NoteIn, user: dict = Depends(get_current_user)):
+    nid = str(uuid.uuid4())
+    order_number = await generate_order_number(user["id"])
+    subtotal, total = calc_totals(payload.items, payload.delivery_fee)
+    doc = {
+        **payload.model_dump(),
+        "id": nid,
+        "order_number": order_number,
+        "subtotal": subtotal,
+        "total": total,
+        "user_id": user["id"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.notes.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.put("/notes/{note_id}")
+async def update_note(note_id: str, payload: NoteIn, user: dict = Depends(get_current_user)):
+    existing = await db.notes.find_one({"id": note_id, "user_id": user["id"]})
+    if not existing:
+        raise HTTPException(404, "Nota não encontrada")
+    subtotal, total = calc_totals(payload.items, payload.delivery_fee)
+    update = {**payload.model_dump(), "subtotal": subtotal, "total": total}
+    await db.notes.update_one({"id": note_id, "user_id": user["id"]}, {"$set": update})
+    doc = await db.notes.find_one({"id": note_id}, {"_id": 0})
+    return doc
+
+@api_router.delete("/notes/{note_id}")
+async def delete_note(note_id: str, user: dict = Depends(get_current_user)):
+    res = await db.notes.delete_one({"id": note_id, "user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Nota não encontrada")
+    return {"ok": True}
+
+# ------------- Dashboard -------------
+@api_router.get("/dashboard/stats")
+async def dashboard_stats(user: dict = Depends(get_current_user)):
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    all_notes = await db.notes.find({"user_id": user["id"]}, {"_id": 0}).to_list(10000)
+    today_notes = [n for n in all_notes if n.get("created_at", "").startswith(today)]
+    total_revenue = sum(n.get("total", 0) for n in all_notes if n.get("status") == "paid")
+    pending = [n for n in all_notes if n.get("status") == "pending"]
+
+    # 7-day revenue
+    today_dt = datetime.now(timezone.utc).date()
+    daily = []
+    for i in range(6, -1, -1):
+        d = today_dt - timedelta(days=i)
+        ds = d.strftime("%Y-%m-%d")
+        day_total = sum(n.get("total", 0) for n in all_notes if n.get("created_at", "").startswith(ds))
+        daily.append({"date": d.strftime("%d/%m"), "total": day_total})
+
+    return {
+        "today_orders": len(today_notes),
+        "total_revenue": total_revenue,
+        "pending_count": len(pending),
+        "total_notes": len(all_notes),
+        "daily_revenue": daily,
+    }
+
+# ------------- Startup -------------
+@app.on_event("startup")
+async def startup():
+    await db.users.create_index("email", unique=True)
+    await db.users.create_index("id", unique=True)
+    await db.products.create_index("id", unique=True)
+    await db.customers.create_index("id", unique=True)
+    await db.notes.create_index("id", unique=True)
+    # Seed admin
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@notas.com")
+    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
+    existing = await db.users.find_one({"email": admin_email})
+    if not existing:
+        await db.users.insert_one({
+            "id": str(uuid.uuid4()),
+            "email": admin_email,
+            "name": "Admin",
+            "password_hash": hash_password(admin_password),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    elif not verify_password(admin_password, existing["password_hash"]):
+        await db.users.update_one(
+            {"email": admin_email},
+            {"$set": {"password_hash": hash_password(admin_password)}}
+        )
+
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"ok": True, "service": "Notas Não Fiscais API"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
-
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
-
-# Include the router in the main app
 app.include_router(api_router)
-
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -77,11 +361,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @app.on_event("shutdown")
